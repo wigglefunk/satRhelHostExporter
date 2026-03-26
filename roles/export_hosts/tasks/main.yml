@@ -1,0 +1,188 @@
+---
+# roles/export_hosts/tasks/main.yml
+# Query Satellite 6.14, split hosts by RHEL major version, write temp files,
+# email as attachments, then clean up. One FQDN per line, no quotes.
+#
+# OS version is detected from the operatingsystem_name field on each host record.
+# Hosts with a missing or unrecognized OS name land in the unknown bucket.
+# Only lists with at least one host are written and attached.
+
+- name: "Query all hosts from Satellite 6.14 for organization: {{ satellite_org }}"
+  redhat.satellite.host_info:
+    username: "{{ satellite_setup_username }}"
+    password: "{{ satellite_initial_admin_password }}"
+    server_url: "{{ old_satellite_server_url }}"
+    validate_certs: false
+    organization: "{{ satellite_org }}"
+    search: "organization = {{ satellite_org }}"
+  register: satellite_hosts
+  delegate_to: localhost
+
+- name: "Fail early - nothing to export if the org has zero hosts"
+  ansible.builtin.fail:
+    msg: "No hosts found in organization '{{ satellite_org }}'. Verify the org name and Satellite connectivity."
+  when: satellite_hosts.hosts | length == 0
+
+# Build a plain name list first so we can use the difference filter,
+# then match back to full objects for OS version detection.
+- name: "Apply exclusion list to host names"
+  ansible.builtin.set_fact:
+    filtered_names: >-
+      {{
+        satellite_hosts.hosts | map(attribute='name') | list |
+        difference(excluded_hostnames | default([]))
+      }}
+
+- name: "Retain full host objects for the filtered name list"
+  ansible.builtin.set_fact:
+    filtered_host_data: >-
+      {{
+        satellite_hosts.hosts |
+        selectattr('name', 'in', filtered_names) | list
+      }}
+
+- name: "Fail if the exclusion list swallowed everything"
+  ansible.builtin.fail:
+    msg: "All {{ satellite_hosts.hosts | length }} hosts were in excluded_hostnames. Check group_vars/all.yml."
+  when: filtered_host_data | length == 0
+
+# Pattern '\s6\.' matches ' 6.' in strings like 'RedHat 6.10' and 'RHEL Server 6.9'.
+# The leading whitespace anchor prevents false matches on hypothetical two-digit versions.
+# Hosts that don't match any version pattern are collected into unknown_hosts below.
+- name: "Categorize hosts by RHEL major version"
+  ansible.builtin.set_fact:
+    rhel6_hosts: >-
+      {{
+        filtered_host_data |
+        selectattr('operatingsystem_name', 'defined') |
+        selectattr('operatingsystem_name', 'search', '\s6\.') |
+        map(attribute='name') | list
+      }}
+    rhel7_hosts: >-
+      {{
+        filtered_host_data |
+        selectattr('operatingsystem_name', 'defined') |
+        selectattr('operatingsystem_name', 'search', '\s7\.') |
+        map(attribute='name') | list
+      }}
+    rhel8_hosts: >-
+      {{
+        filtered_host_data |
+        selectattr('operatingsystem_name', 'defined') |
+        selectattr('operatingsystem_name', 'search', '\s8\.') |
+        map(attribute='name') | list
+      }}
+    rhel9_hosts: >-
+      {{
+        filtered_host_data |
+        selectattr('operatingsystem_name', 'defined') |
+        selectattr('operatingsystem_name', 'search', '\s9\.') |
+        map(attribute='name') | list
+      }}
+
+# Anything not matched by a version pattern ends up here.
+# Covers null OS, empty string, undefined attribute, and unrecognized values.
+- name: "Collect hosts with missing or unrecognized OS into the unknown bucket"
+  ansible.builtin.set_fact:
+    unknown_hosts: >-
+      {{
+        filtered_host_data | map(attribute='name') | list |
+        difference(rhel6_hosts + rhel7_hosts + rhel8_hosts + rhel9_hosts)
+      }}
+
+- name: "Display categorization summary"
+  ansible.builtin.debug:
+    msg:
+      - "Total in Satellite 6.14     : {{ satellite_hosts.hosts | length }}"
+      - "Excluded                     : {{ (satellite_hosts.hosts | length) - (filtered_host_data | length) }}"
+      - "RHEL 6                       : {{ rhel6_hosts | length }}"
+      - "RHEL 7                       : {{ rhel7_hosts | length }}"
+      - "RHEL 8                       : {{ rhel8_hosts | length }}"
+      - "RHEL 9                       : {{ rhel9_hosts | length }}"
+      - "Unknown OS                   : {{ unknown_hosts | length }}"
+
+# Write temp files - skipped entirely if the list is empty.
+# Content is one FQDN per line using a Jinja2 for loop.
+# The \n in a YAML double-quoted string is a real newline, giving us clean line breaks.
+- name: "Write RHEL 6 host list"
+  ansible.builtin.copy:
+    dest: "{{ rhel6_list_path }}"
+    content: "{% for h in rhel6_hosts %}{{ h }}\n{% endfor %}"
+    mode: '0644'
+  when: rhel6_hosts | length > 0
+
+- name: "Write RHEL 7 host list"
+  ansible.builtin.copy:
+    dest: "{{ rhel7_list_path }}"
+    content: "{% for h in rhel7_hosts %}{{ h }}\n{% endfor %}"
+    mode: '0644'
+  when: rhel7_hosts | length > 0
+
+- name: "Write RHEL 8 host list"
+  ansible.builtin.copy:
+    dest: "{{ rhel8_list_path }}"
+    content: "{% for h in rhel8_hosts %}{{ h }}\n{% endfor %}"
+    mode: '0644'
+  when: rhel8_hosts | length > 0
+
+- name: "Write RHEL 9 host list"
+  ansible.builtin.copy:
+    dest: "{{ rhel9_list_path }}"
+    content: "{% for h in rhel9_hosts %}{{ h }}\n{% endfor %}"
+    mode: '0644'
+  when: rhel9_hosts | length > 0
+
+- name: "Write unknown OS host list"
+  ansible.builtin.copy:
+    dest: "{{ unknown_list_path }}"
+    content: "{% for h in unknown_hosts %}{{ h }}\n{% endfor %}"
+    mode: '0644'
+  when: unknown_hosts | length > 0
+
+# Build the attachment list dynamically - only paths that had a file written.
+- name: "Build email attachment list from non-empty lists only"
+  ansible.builtin.set_fact:
+    email_attachments: >-
+      {{
+        (rhel6_hosts | length > 0) | ternary([rhel6_list_path], []) +
+        (rhel7_hosts | length > 0) | ternary([rhel7_list_path], []) +
+        (rhel8_hosts | length > 0) | ternary([rhel8_list_path], []) +
+        (rhel9_hosts | length > 0) | ternary([rhel9_list_path], []) +
+        (unknown_hosts | length > 0) | ternary([unknown_list_path], [])
+      }}
+
+- name: "Send host export report with attached lists"
+  community.general.mail:
+    host: "{{ smtp_host }}"
+    port: 25
+    from: "{{ notification_email_from }}"
+    to: "{{ notification_email_to }}"
+    subject: "Satellite Host Export - {{ satellite_org }} - {{ job_timestamp }}"
+    body: |
+      Satellite 6.14 Host Export Report
+      ==================================
+      Organization : {{ satellite_org }}
+      Timestamp    : {{ job_timestamp }}
+      Source       : {{ old_satellite_fqdn }}
+
+      Host Counts by RHEL Version
+      ---------------------------
+      RHEL 6  : {{ rhel6_hosts | length }}
+      RHEL 7  : {{ rhel7_hosts | length }}
+      RHEL 8  : {{ rhel8_hosts | length }}
+      RHEL 9  : {{ rhel9_hosts | length }}
+      Unknown : {{ unknown_hosts | length }}
+      ---------------------------
+      Total exported : {{ filtered_host_data | length }}
+      Excluded       : {{ (satellite_hosts.hosts | length) - (filtered_host_data | length) }}
+
+      Attached files contain one FQDN per line.
+      Only lists with one or more hosts are attached.
+    attach: "{{ email_attachments }}"
+
+# Clean up after ourselves. The loop only runs over files that were actually created.
+- name: "Remove temp files - the control node is ephemeral, no need to leave debris"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ email_attachments }}"

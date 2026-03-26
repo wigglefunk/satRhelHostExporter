@@ -1,0 +1,35 @@
+---
+# export_host_lists.yml
+# Export all hosts from Satellite 6.14, categorize by RHEL major version,
+# and email the results as plain text file attachments.
+# One FQDN per line, no quotes. Unknown or missing OS goes to its own list.
+#
+# AAP Job Template Requirements:
+#   Survey Input : satellite_org  (text field, required)
+#   Credential   : Satellite API credential (provides app_username, app_password)
+
+- name: "Export and Categorize Satellite 6.14 Hosts by RHEL Version"
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/group_vars/all.yml"
+  collections:
+    - redhat.satellite
+    - community.general
+  pre_tasks:
+    - name: "Validate required variables are present"
+      ansible.builtin.assert:
+        that:
+          - satellite_org is defined
+          - satellite_org | length > 0
+          - app_username is defined
+          - app_password is defined
+        fail_msg: "satellite_org must be set via AAP survey. app_username and app_password must be provided via AAP Satellite API credential."
+        success_msg: "Variables validated for organization: {{ satellite_org }}"
+
+    - name: "Set job timestamp"
+      ansible.builtin.set_fact:
+        job_timestamp: "{{ lookup('pipe', 'date +%Y-%m-%dT%H:%M:%S%z') }}"
+
+  roles:
+    - export_hosts

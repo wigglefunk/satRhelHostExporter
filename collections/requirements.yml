@@ -1,0 +1,10 @@
+---
+# collections/requirements.yml
+# Required Ansible collections for the Satellite host list export tool.
+
+collections:
+  - name: redhat.satellite
+    version: ">=3.0.0"
+
+  - name: community.general
+    version: ">=6.0.0"

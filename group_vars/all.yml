@@ -1,0 +1,50 @@
+---
+# group_vars/all.yml
+# Standalone configuration for the Satellite host list export tool.
+#
+# AAP Job Template Requirements:
+#   Survey Input : satellite_org  (text field, required)
+#   Credential   : Satellite API credential (provides app_username, app_password)
+
+# ============================================================================
+# Satellite Server
+# ============================================================================
+old_satellite_fqdn: "614sat.us.lmco.com"
+old_satellite_server_url: "https://{{ old_satellite_fqdn }}"
+
+# ============================================================================
+# Satellite API Credentials
+# ============================================================================
+# Injected by AAP Satellite API credential attached to the job template.
+# No manual configuration needed here.
+satellite_setup_username: "{{ app_username }}"
+satellite_initial_admin_password: "{{ app_password }}"
+
+# ============================================================================
+# Host Filtering
+# ============================================================================
+# Hosts to exclude from the export - capsules, satellites, infrastructure.
+# Update this list to match your environment before running.
+excluded_hostnames:
+  - "p1.us.lmco.com"
+  - "cap1.us.lmco.com"
+  - "cap2.us.lmco.com"
+  - "cap3.us.lmco.com"
+  - "cap4.us.lmco.com"
+
+# ============================================================================
+# Email Settings
+# ============================================================================
+smtp_host: "dcs-mailhandler.us.lm.com"
+notification_email_to: "FCMdl@lmc.com"
+notification_email_from: "satellite-migration@us.lmco.com"
+
+# ============================================================================
+# Temp File Paths
+# ============================================================================
+# Control node is ephemeral. Files are written, attached, then deleted.
+rhel6_list_path: "/tmp/sat_export_rhel6.txt"
+rhel7_list_path: "/tmp/sat_export_rhel7.txt"
+rhel8_list_path: "/tmp/sat_export_rhel8.txt"
+rhel9_list_path: "/tmp/sat_export_rhel9.txt"
+unknown_list_path: "/tmp/sat_export_unknown.txt"
