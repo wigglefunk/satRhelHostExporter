@@ -13,6 +13,14 @@ old_satellite_fqdn: "614sat.us.lmco.com"
 old_satellite_server_url: "https://{{ old_satellite_fqdn }}"
 
 # ============================================================================
+# Organization and Location Configuration
+# ============================================================================
+# When testing is complete, satellite_org variable could be set and Provided via AAP survey to at job launch time (not defined here)
+# Example values: "EO_ITRA", "EO_NAVAIR", etc.
+satellite_org: "EO_ITRA"
+new_default_env: "{{ satellite_org }}_ALL"
+
+# ============================================================================
 # Satellite API Credentials
 # ============================================================================
 # Injected by AAP Satellite API credential attached to the job template.
